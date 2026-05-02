@@ -146,7 +146,11 @@ impl<
         // Split the current layer as long as it is too large.
         if self.buckets[self.pivots.len()].len() > N {
             while self.buckets[self.pivots.len()].len() > N {
+                let prev_len = self.buckets[self.pivots.len()].len();
                 self.partition();
+                if self.buckets[self.pivots.len()].len() >= prev_len {
+                    break; // All elements equal T::MAX; no split possible.
+                }
             }
             if SORT {
                 // Sort final layer decreasing.
@@ -194,6 +198,16 @@ impl<
 
         // Sample a pivot using the pivot strategy
         let (pivot, pivot_pos) = P::pick(&cur_layer);
+
+        // When pivot == T::MAX, wrapping_add_one overflows to 0 (or T::MIN for
+        // signed types), making the first-half threshold useless. Rather than
+        // partitioning with a broken threshold, bail out immediately. The
+        // pop() loop's progress check will break and fall through to the
+        // sort-and-pop path.
+        if pivot == S::MAX {
+            return;
+        }
+
         self.pivots.push(pivot);
 
         // Reserve space in the next layer,
