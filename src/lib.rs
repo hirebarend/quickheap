@@ -146,7 +146,11 @@ impl<
         // Split the current layer as long as it is too large.
         if self.buckets[self.pivots.len()].len() > N {
             while self.buckets[self.pivots.len()].len() > N {
+                let prev_len = self.buckets[self.pivots.len()].len();
                 self.partition();
+                if self.buckets[self.pivots.len()].len() >= prev_len {
+                    break; // All elements equal T::MAX; no split possible.
+                }
             }
             if SORT {
                 // Sort final layer decreasing.
@@ -210,7 +214,14 @@ impl<
         // Partition a list into two using SIMD.
         let mut cur_len = 0;
         let mut next_len = 0;
-        let half = (pivot_pos + 1).min(n2).next_multiple_of(S::L);
+        // When pivot == T::MAX, wrapping_add_one overflows to 0 (or T::MIN for
+        // signed types), making the threshold useless. Skip the first half
+        // entirely so all elements use threshold = pivot.
+        let half = if pivot == S::MAX {
+            0
+        } else {
+            (pivot_pos + 1).min(n2).next_multiple_of(S::L)
+        };
         let threshold = S::splat(S::wrapping_add_one(pivot));
         for i in (0..half).step_by(S::L) {
             unsafe {
@@ -238,7 +249,7 @@ impl<
             }
         }
         if n2 < n {
-            let threshold = if pivot_pos >= n2 {
+            let threshold = if pivot_pos >= n2 && pivot != S::MAX {
                 S::splat(S::wrapping_add_one(pivot))
             } else {
                 S::splat(pivot)
@@ -256,7 +267,7 @@ impl<
             }
         }
 
-        debug_assert!(next_len > 0);
+        debug_assert!(next_len > 0 || pivot == S::MAX);
 
         unsafe {
             cur_layer.set_len(cur_len);
@@ -267,6 +278,14 @@ impl<
         // because the pivot was the largest one,
         // undo and try again.
         if cur_len == 0 {
+            std::mem::swap(cur_layer, next_layer);
+            self.pivots.pop().unwrap();
+        }
+
+        // If all elements stayed in cur_layer (next is empty), this means
+        // all elements equal T::MAX (pivot+1 overflowed or all >= pivot).
+        // Undo the partition; the pop() loop will detect no progress and stop.
+        if next_len == 0 {
             std::mem::swap(cur_layer, next_layer);
             self.pivots.pop().unwrap();
         }
