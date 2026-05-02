@@ -1,3 +1,4 @@
+#[cfg(target_arch = "x86_64")]
 use std::mem::transmute;
 
 use wide::{CmpGt, CmpLt};
@@ -5,6 +6,7 @@ use wide::{CmpGt, CmpLt};
 /// Marker type selecting the AVX2 (256-bit) SIMD backend for [`ConfigurableSimdQuickHeap`].
 ///
 /// [`ConfigurableSimdQuickHeap`]: crate::ConfigurableSimdQuickHeap
+#[cfg(target_arch = "x86_64")]
 pub struct Avx2;
 
 /// Marker type selecting the AVX-512 (512-bit) SIMD backend for [`ConfigurableSimdQuickHeap`].
@@ -18,7 +20,16 @@ pub struct Avx2;
 /// Requires compiling with `RUSTFLAGS="-C target-feature=+avx512f"` and the `avx512` feature.
 ///
 /// [`ConfigurableSimdQuickHeap`]: crate::ConfigurableSimdQuickHeap
+#[cfg(target_arch = "x86_64")]
 pub struct Avx512<const CS: bool = false>;
+
+/// Marker type selecting the NEON (128-bit) SIMD backend for [`ConfigurableSimdQuickHeap`].
+///
+/// Uses ARM NEON instructions (4 lanes for 32-bit, 2 lanes for 64-bit).
+///
+/// [`ConfigurableSimdQuickHeap`]: crate::ConfigurableSimdQuickHeap
+#[cfg(target_arch = "aarch64")]
+pub struct Neon;
 
 /// A SIMD backend strategy for element type `T`.
 ///
@@ -141,6 +152,7 @@ pub fn position_min<T: Copy + Ord, S: SimdElem<T>>(v: &mut Vec<T>) -> usize {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 macro_rules! impl_simd_elem_32 {
     ($t:ty, $simd:ty) => {
         impl SimdElem<$t> for Avx2 {
@@ -258,6 +270,7 @@ macro_rules! impl_simd_elem_32 {
     };
 }
 
+#[cfg(target_arch = "x86_64")]
 macro_rules! impl_simd_elem_64 {
     ($t:ty, $simd:ty) => {
         impl SimdElem<$t> for Avx2 {
@@ -378,6 +391,7 @@ macro_rules! impl_simd_elem_64 {
     };
 }
 
+#[cfg(target_arch = "x86_64")]
 macro_rules! impl_simd_elem_32_avx512 {
     ($t:ty, $simd:ty) => {
         impl<const CS: bool> SimdElem<$t> for Avx512<CS> {
@@ -508,6 +522,7 @@ macro_rules! impl_simd_elem_32_avx512 {
     };
 }
 
+#[cfg(target_arch = "x86_64")]
 macro_rules! impl_simd_elem_64_avx512 {
     ($t:ty, $simd:ty) => {
         impl<const CS: bool> SimdElem<$t> for Avx512<CS> {
@@ -638,18 +653,27 @@ macro_rules! impl_simd_elem_64_avx512 {
     };
 }
 
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_32!(i32, wide::i32x8);
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_32!(u32, wide::u32x8);
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_64!(i64, wide::i64x4);
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_64!(u64, wide::u64x4);
 
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_32_avx512!(i32, wide::i32x16);
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_32_avx512!(u32, wide::u32x16);
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_64_avx512!(i64, wide::i64x8);
+#[cfg(target_arch = "x86_64")]
 impl_simd_elem_64_avx512!(u64, wide::u64x8);
 
 /// For each of 256 masks of which elements are different than their predecessor,
 /// a shuffle that sends those new elements to the beginning.
+#[cfg(target_arch = "x86_64")]
 #[rustfmt::skip]
 pub(crate) const UNIQSHUF32: [[i32; 8]; 256] = unsafe {transmute([
 0,1,2,3,4,5,6,7,
@@ -911,6 +935,7 @@ pub(crate) const UNIQSHUF32: [[i32; 8]; 256] = unsafe {transmute([
 ])};
 
 /// Masks for 32-bit shuffle instructions on 64-bit data.
+#[cfg(target_arch = "x86_64")]
 #[rustfmt::skip]
 pub(crate) const UNIQSHUF64: [[i32; 8]; 16] = unsafe {
 transmute([
@@ -932,3 +957,291 @@ transmute([
 0, 0, 0, 0, 0, 0, 0, 0, //1111
 ])
 };
+
+// =============================================================================
+// NEON (aarch64) implementation
+// =============================================================================
+
+#[cfg(target_arch = "aarch64")]
+macro_rules! impl_simd_elem_32_neon {
+    ($t:ty, $simd:ty) => {
+        impl SimdElem<$t> for Neon {
+            const L: usize = 4;
+            const MAX: $t = <$t>::MAX;
+            type Simd = $simd;
+
+            #[inline(always)]
+            fn splat(v: $t) -> $simd {
+                <$simd>::splat(v)
+            }
+
+            #[inline(always)]
+            unsafe fn simd_from_slice(slice: &[$t]) -> $simd {
+                unsafe { <$simd>::from(*(slice.as_ptr() as *const [$t; 4])) }
+            }
+
+            #[inline(always)]
+            fn simd_lt_bitmask(a: $simd, b: $simd) -> u64 {
+                a.simd_lt(b).to_bitmask() as u64
+            }
+
+            #[inline(always)]
+            fn lane_indices() -> $simd {
+                <$simd>::from([0 as $t, 1, 2, 3])
+            }
+
+            #[inline(always)]
+            fn from_usize(n: usize) -> $t {
+                n as $t
+            }
+
+            #[inline(always)]
+            fn wrapping_add_one(t: $t) -> $t {
+                t.wrapping_add(1)
+            }
+
+            #[inline(always)]
+            unsafe fn partition_fast(
+                vals: $simd,
+                threshold: $simd,
+                v: &mut [$t],
+                v_idx: &mut usize,
+                w: &mut [$t],
+                w_idx: &mut usize,
+            ) {
+                unsafe {
+                    use core::arch::aarch64::*;
+                    use std::mem::transmute;
+
+                    let small = threshold.simd_gt(vals).to_bitmask() as u8 & 0xF;
+                    let large = small ^ 0xF;
+                    let vals: uint8x16_t = transmute(vals);
+
+                    // Write large (>= threshold) to v: shuffle keeping large lanes.
+                    let key: uint8x16_t = transmute(NEON_SHUF32[small as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(v.as_mut_ptr().add(*v_idx) as *mut u8, shuffled);
+                    *v_idx += large.count_ones() as usize;
+
+                    // Write small (< threshold) to w: shuffle keeping small lanes.
+                    let key: uint8x16_t = transmute(NEON_SHUF32[large as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(w.as_mut_ptr().add(*w_idx) as *mut u8, shuffled);
+                    *w_idx += small.count_ones() as usize;
+                }
+            }
+
+            #[inline(always)]
+            unsafe fn partition_slow(
+                vals: $simd,
+                len: $simd,
+                threshold: $simd,
+                v: &mut [$t],
+                v_idx: &mut usize,
+                w: &mut [$t],
+                w_idx: &mut usize,
+            ) {
+                unsafe {
+                    use core::arch::aarch64::*;
+                    use std::mem::transmute;
+
+                    let mut small = vals.simd_lt(threshold).to_bitmask() as u8 & 0xF;
+                    let mut large = small ^ 0xF;
+                    let in_range = len
+                        .simd_gt(<Self as SimdElem<$t>>::lane_indices())
+                        .to_bitmask() as u8
+                        & 0xF;
+                    small &= in_range;
+                    large &= in_range;
+
+                    let vals: uint8x16_t = transmute(vals);
+
+                    let key: uint8x16_t = transmute(NEON_SHUF32[(!large & 0xF) as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(v.as_mut_ptr().add(*v_idx) as *mut u8, shuffled);
+                    *v_idx += large.count_ones() as usize;
+
+                    let key: uint8x16_t = transmute(NEON_SHUF32[(!small & 0xF) as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(w.as_mut_ptr().add(*w_idx) as *mut u8, shuffled);
+                    *w_idx += small.count_ones() as usize;
+                }
+            }
+        }
+    };
+}
+
+#[cfg(target_arch = "aarch64")]
+macro_rules! impl_simd_elem_64_neon {
+    ($t:ty, $simd:ty) => {
+        impl SimdElem<$t> for Neon {
+            const L: usize = 2;
+            const MAX: $t = <$t>::MAX;
+            type Simd = $simd;
+
+            #[inline(always)]
+            fn splat(v: $t) -> $simd {
+                <$simd>::splat(v)
+            }
+
+            #[inline(always)]
+            unsafe fn simd_from_slice(slice: &[$t]) -> $simd {
+                unsafe { <$simd>::from(*(slice.as_ptr() as *const [$t; 2])) }
+            }
+
+            #[inline(always)]
+            fn simd_lt_bitmask(a: $simd, b: $simd) -> u64 {
+                a.simd_lt(b).to_bitmask() as u64
+            }
+
+            #[inline(always)]
+            fn lane_indices() -> $simd {
+                <$simd>::from([0 as $t, 1])
+            }
+
+            #[inline(always)]
+            fn from_usize(n: usize) -> $t {
+                n as $t
+            }
+
+            #[inline(always)]
+            fn wrapping_add_one(t: $t) -> $t {
+                t.wrapping_add(1)
+            }
+
+            #[inline(always)]
+            unsafe fn partition_fast(
+                vals: $simd,
+                threshold: $simd,
+                v: &mut [$t],
+                v_idx: &mut usize,
+                w: &mut [$t],
+                w_idx: &mut usize,
+            ) {
+                unsafe {
+                    use core::arch::aarch64::*;
+                    use std::mem::transmute;
+
+                    // 2-bit mask: bit i = lane i is small (< threshold).
+                    let small = (threshold.simd_gt(vals).to_bitmask() as u8) & 0x3;
+                    let large = small ^ 0x3;
+                    let vals: uint8x16_t = transmute(vals);
+
+                    // Write large (>= threshold) to v.
+                    let key: uint8x16_t = transmute(NEON_SHUF64[small as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(v.as_mut_ptr().add(*v_idx) as *mut u8, shuffled);
+                    *v_idx += large.count_ones() as usize;
+
+                    // Write small (< threshold) to w.
+                    let key: uint8x16_t = transmute(NEON_SHUF64[large as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(w.as_mut_ptr().add(*w_idx) as *mut u8, shuffled);
+                    *w_idx += small.count_ones() as usize;
+                }
+            }
+
+            #[inline(always)]
+            unsafe fn partition_slow(
+                vals: $simd,
+                len: $simd,
+                threshold: $simd,
+                v: &mut [$t],
+                v_idx: &mut usize,
+                w: &mut [$t],
+                w_idx: &mut usize,
+            ) {
+                unsafe {
+                    use core::arch::aarch64::*;
+                    use std::mem::transmute;
+
+                    let mut small = (vals.simd_lt(threshold).to_bitmask() as u8) & 0x3;
+                    let mut large = small ^ 0x3;
+                    let in_range = (len
+                        .simd_gt(<Self as SimdElem<$t>>::lane_indices())
+                        .to_bitmask() as u8)
+                        & 0x3;
+                    small &= in_range;
+                    large &= in_range;
+
+                    let vals: uint8x16_t = transmute(vals);
+
+                    // To keep large lanes: index = large ^ 0x3.
+                    let key: uint8x16_t = transmute(NEON_SHUF64[(large ^ 0x3) as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(v.as_mut_ptr().add(*v_idx) as *mut u8, shuffled);
+                    *v_idx += large.count_ones() as usize;
+
+                    // To keep small lanes: index = small ^ 0x3.
+                    let key: uint8x16_t = transmute(NEON_SHUF64[(small ^ 0x3) as usize]);
+                    let shuffled = vqtbl1q_u8(vals, key);
+                    vst1q_u8(w.as_mut_ptr().add(*w_idx) as *mut u8, shuffled);
+                    *w_idx += small.count_ones() as usize;
+                }
+            }
+        }
+    };
+}
+
+#[cfg(target_arch = "aarch64")]
+impl_simd_elem_32_neon!(i32, wide::i32x4);
+#[cfg(target_arch = "aarch64")]
+impl_simd_elem_32_neon!(u32, wide::u32x4);
+#[cfg(target_arch = "aarch64")]
+impl_simd_elem_64_neon!(i64, wide::i64x2);
+#[cfg(target_arch = "aarch64")]
+impl_simd_elem_64_neon!(u64, wide::u64x2);
+
+/// Byte-shuffle table for NEON 32-bit partition (4 lanes).
+/// Index by the "exclude" mask (4 bits). Excluded lanes are moved to the end.
+#[cfg(target_arch = "aarch64")]
+#[rustfmt::skip]
+pub(crate) const NEON_SHUF32: [[u8; 16]; 16] = [
+    // 0000: keep all [0,1,2,3]
+    [ 0, 1, 2, 3,  4, 5, 6, 7,  8, 9,10,11, 12,13,14,15],
+    // 0001: exclude lane 0 → [1,2,3,0]
+    [ 4, 5, 6, 7,  8, 9,10,11, 12,13,14,15,  0, 1, 2, 3],
+    // 0010: exclude lane 1 → [0,2,3,1]
+    [ 0, 1, 2, 3,  8, 9,10,11, 12,13,14,15,  4, 5, 6, 7],
+    // 0011: exclude lanes 0,1 → [2,3,0,1]
+    [ 8, 9,10,11, 12,13,14,15,  0, 1, 2, 3,  4, 5, 6, 7],
+    // 0100: exclude lane 2 → [0,1,3,2]
+    [ 0, 1, 2, 3,  4, 5, 6, 7, 12,13,14,15,  8, 9,10,11],
+    // 0101: exclude lanes 0,2 → [1,3,0,2]
+    [ 4, 5, 6, 7, 12,13,14,15,  0, 1, 2, 3,  8, 9,10,11],
+    // 0110: exclude lanes 1,2 → [0,3,1,2]
+    [ 0, 1, 2, 3, 12,13,14,15,  4, 5, 6, 7,  8, 9,10,11],
+    // 0111: exclude lanes 0,1,2 → [3,0,1,2]
+    [12,13,14,15,  0, 1, 2, 3,  4, 5, 6, 7,  8, 9,10,11],
+    // 1000: exclude lane 3 → [0,1,2,3]
+    [ 0, 1, 2, 3,  4, 5, 6, 7,  8, 9,10,11, 12,13,14,15],
+    // 1001: exclude lanes 0,3 → [1,2,0,3]
+    [ 4, 5, 6, 7,  8, 9,10,11,  0, 1, 2, 3, 12,13,14,15],
+    // 1010: exclude lanes 1,3 → [0,2,1,3]
+    [ 0, 1, 2, 3,  8, 9,10,11,  4, 5, 6, 7, 12,13,14,15],
+    // 1011: exclude lanes 0,1,3 → [2,0,1,3]
+    [ 8, 9,10,11,  0, 1, 2, 3,  4, 5, 6, 7, 12,13,14,15],
+    // 1100: exclude lanes 2,3 → [0,1,2,3]
+    [ 0, 1, 2, 3,  4, 5, 6, 7,  8, 9,10,11, 12,13,14,15],
+    // 1101: exclude lanes 0,2,3 → [1,0,2,3]
+    [ 4, 5, 6, 7,  0, 1, 2, 3,  8, 9,10,11, 12,13,14,15],
+    // 1110: exclude lanes 1,2,3 → [0,1,2,3]
+    [ 0, 1, 2, 3,  4, 5, 6, 7,  8, 9,10,11, 12,13,14,15],
+    // 1111: exclude all → [0,1,2,3]
+    [ 0, 1, 2, 3,  4, 5, 6, 7,  8, 9,10,11, 12,13,14,15],
+];
+
+/// Byte-shuffle table for NEON 64-bit partition (2 lanes).
+/// Index by the "exclude" mask (2 bits). Excluded lanes are moved to the end.
+#[cfg(target_arch = "aarch64")]
+#[rustfmt::skip]
+pub(crate) const NEON_SHUF64: [[u8; 16]; 4] = [
+    // 00: keep all [0,1]
+    [ 0, 1, 2, 3, 4, 5, 6, 7,  8, 9,10,11,12,13,14,15],
+    // 01: exclude lane 0 → [1,0]
+    [ 8, 9,10,11,12,13,14,15,  0, 1, 2, 3, 4, 5, 6, 7],
+    // 10: exclude lane 1 → [0,1]
+    [ 0, 1, 2, 3, 4, 5, 6, 7,  8, 9,10,11,12,13,14,15],
+    // 11: exclude all → [0,1]
+    [ 0, 1, 2, 3, 4, 5, 6, 7,  8, 9,10,11,12,13,14,15],
+];

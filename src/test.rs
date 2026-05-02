@@ -21,15 +21,22 @@ fn heapsort<S: SimdElem<u64>>() {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn heapsort_avx2() {
     heapsort::<crate::Avx2>();
 }
 
-#[cfg(target_feature = "avx512f")]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[test]
 fn heapsort_avx512() {
     heapsort::<crate::Avx512>();
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn heapsort_neon() {
+    heapsort::<crate::Neon>();
 }
 
 fn wiggle<S: SimdElem<u64>>() {
@@ -63,13 +70,20 @@ fn wiggle<S: SimdElem<u64>>() {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn wiggle_avx2() {
     wiggle::<crate::Avx2>();
 }
 
-#[cfg(target_feature = "avx512f")]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[test]
 fn wiggle_avx512() {
     wiggle::<crate::Avx512>();
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn wiggle_neon() {
+    wiggle::<crate::Neon>();
 }

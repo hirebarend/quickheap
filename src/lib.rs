@@ -6,8 +6,8 @@
 //!
 //! The [`ConfigurableSimdQuickHeap`] type is mostly for benchmarking only, to test various parameters.
 //!
-//! By default, it uses AVX2, or AVX-512 when available during compile time.
-//! To force one or the other, use `SimdQuickHeap<T, Avx2>` or `SimdQuickHeap<T, Avx512>`.
+//! By default, it uses AVX2 on x86_64 (or AVX-512 when available), and NEON on aarch64 (macOS Apple Silicon).
+//! To force a specific backend, use `SimdQuickHeap<T, Avx2>`, `SimdQuickHeap<T, Avx512>`, or `SimdQuickHeap<T, Neon>`.
 //!
 //! ## Example
 //! ```
@@ -32,13 +32,18 @@ mod test;
 
 use std::marker::PhantomData;
 
+#[cfg(target_arch = "x86_64")]
 pub use simd::{Avx2, Avx512};
+#[cfg(target_arch = "aarch64")]
+pub use simd::Neon;
 
-/// Tag to use with [`ConfigurableSimdQuickHeap`] to use AVX-512 if it is available.
-#[cfg(not(target_feature = "avx512f"))]
+/// Default SIMD backend: AVX-512 if available, AVX2 on x86_64, NEON on aarch64.
+#[cfg(all(target_arch = "x86_64", not(target_feature = "avx512f")))]
 pub type Simd = Avx2;
-#[cfg(target_feature = "avx512f")]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub type Simd = Avx512;
+#[cfg(target_arch = "aarch64")]
+pub type Simd = Neon;
 
 /// Wrapper trait for `Copy + Ord`.
 #[doc(hidden)]
